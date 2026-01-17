@@ -24,12 +24,31 @@ except ImportError:
     sys.exit(1)
 
 # Configuration - Set NIGHTSCOUT_URL environment variable to your Nightscout API endpoint
-API_BASE = os.environ.get("NIGHTSCOUT_URL")
-if not API_BASE:
+_raw_url = os.environ.get("NIGHTSCOUT_URL")
+if not _raw_url:
     print("Error: NIGHTSCOUT_URL environment variable not set.")
-    print("Set it to your Nightscout API endpoint, e.g.:")
+    print("Set it to your Nightscout site URL, e.g.:")
+    print("  export NIGHTSCOUT_URL='https://your-site.herokuapp.com'")
+    print("Or the full API endpoint:")
     print("  export NIGHTSCOUT_URL='https://your-site.herokuapp.com/api/v1/entries.json'")
     sys.exit(1)
+
+# Normalize the URL - support both full endpoint and just the domain
+def _normalize_nightscout_url(url):
+    """Normalize NIGHTSCOUT_URL to always point to /api/v1/entries.json"""
+    url = url.rstrip("/")
+    if url.endswith("/api/v1/entries.json"):
+        return url
+    if url.endswith("/api/v1/entries"):
+        return url + ".json"
+    if url.endswith("/api/v1"):
+        return url + "/entries.json"
+    if url.endswith("/api"):
+        return url + "/v1/entries.json"
+    # Just the domain
+    return url + "/api/v1/entries.json"
+
+API_BASE = _normalize_nightscout_url(_raw_url)
 
 # Derive the API root from the entries URL
 API_ROOT = API_BASE.replace("/entries.json", "").rstrip("/")

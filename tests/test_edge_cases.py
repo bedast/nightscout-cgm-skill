@@ -8,6 +8,52 @@ from unittest.mock import patch, MagicMock
 import requests
 
 
+class TestNightscoutUrlNormalization:
+    """Tests for flexible NIGHTSCOUT_URL handling."""
+    
+    def test_full_url_unchanged(self, cgm_module):
+        """Full URL with /api/v1/entries.json should be unchanged."""
+        url = "https://my-ns.herokuapp.com/api/v1/entries.json"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == url
+    
+    def test_domain_only(self, cgm_module):
+        """Just domain should get full path appended."""
+        url = "https://my-ns.herokuapp.com"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://my-ns.herokuapp.com/api/v1/entries.json"
+    
+    def test_domain_with_trailing_slash(self, cgm_module):
+        """Domain with trailing slash should work."""
+        url = "https://my-ns.herokuapp.com/"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://my-ns.herokuapp.com/api/v1/entries.json"
+    
+    def test_partial_api_path(self, cgm_module):
+        """Partial /api path should be completed."""
+        url = "https://my-ns.herokuapp.com/api"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://my-ns.herokuapp.com/api/v1/entries.json"
+    
+    def test_partial_api_v1_path(self, cgm_module):
+        """Partial /api/v1 path should be completed."""
+        url = "https://my-ns.herokuapp.com/api/v1"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://my-ns.herokuapp.com/api/v1/entries.json"
+    
+    def test_entries_without_json(self, cgm_module):
+        """/api/v1/entries without .json should add it."""
+        url = "https://my-ns.herokuapp.com/api/v1/entries"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://my-ns.herokuapp.com/api/v1/entries.json"
+    
+    def test_custom_subdomain(self, cgm_module):
+        """Works with custom subdomains."""
+        url = "https://nightscout.example.org"
+        result = cgm_module._normalize_nightscout_url(url)
+        assert result == "https://nightscout.example.org/api/v1/entries.json"
+
+
 class TestErrorHandling:
     """Tests for error handling throughout the module."""
     
