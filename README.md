@@ -157,6 +157,20 @@ MIT License - see [LICENSE](LICENSE) file.
 
 Contributions welcome! Please feel free to submit a Pull Request.
 
+## Appendix: How Nightscout Units Work
+
+If you're wondering why we need to convert units when Nightscout already has a `DISPLAY_UNITS` setting - here's the quirk:
+
+**The Nightscout API always returns glucose values in mg/dL**, regardless of your display settings. This is a deliberate design decision:
+
+- **Database storage**: Always mg/dL (integers are easier to store and compare)
+- **API responses**: Always mg/dL (the `sgv` field is always in mg/dL)
+- **`DISPLAY_UNITS` setting**: Only affects the Nightscout web UI, not the API
+
+So a European user with `DISPLAY_UNITS=mmol` will see `8.4 mmol/L` on their Nightscout dashboard, but the API still returns `"sgv": 152` (mg/dL). Every Nightscout client app (including this skill) must convert values for display if the user prefers mmol/L.
+
+This skill reads your `DISPLAY_UNITS` setting and converts automatically - you don't need to configure anything extra.
+
 ## Related
 
 - [Nightscout](http://www.nightscout.info/) - Open source CGM data platform

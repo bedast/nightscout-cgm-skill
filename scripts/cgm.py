@@ -72,10 +72,9 @@ def get_thresholds():
     thresholds = get_nightscout_settings().get("thresholds", {})
     return {
         "urgent_low": thresholds.get("bgLow", 55),
-        "low": 70,  # Standard low threshold
         "target_low": thresholds.get("bgTargetBottom", 70),
         "target_high": thresholds.get("bgTargetTop", 180),
-        "high": thresholds.get("bgHigh", 250),
+        "urgent_high": thresholds.get("bgHigh", 250),
     }
 SKILL_DIR = Path(__file__).parent.parent
 DB_PATH = SKILL_DIR / "cgm_data.db"
@@ -184,8 +183,8 @@ def get_time_in_range(values):
         "very_low_pct": round(sum(1 for v in values if v < t["urgent_low"]) / n * 100, 1),
         "low_pct": round(sum(1 for v in values if t["urgent_low"] <= v < t["target_low"]) / n * 100, 1),
         "in_range_pct": round(sum(1 for v in values if t["target_low"] <= v <= t["target_high"]) / n * 100, 1),
-        "high_pct": round(sum(1 for v in values if t["target_high"] < v <= t["high"]) / n * 100, 1),
-        "very_high_pct": round(sum(1 for v in values if v > t["high"]) / n * 100, 1),
+        "high_pct": round(sum(1 for v in values if t["target_high"] < v <= t["urgent_high"]) / n * 100, 1),
+        "very_high_pct": round(sum(1 for v in values if v > t["urgent_high"]) / n * 100, 1),
     }
 
 
@@ -268,7 +267,7 @@ def get_current_glucose():
             status = "low"
         elif sgv <= t["target_high"]:
             status = "in range"
-        elif sgv <= t["high"]:
+        elif sgv <= t["urgent_high"]:
             status = "high"
         else:
             status = "VERY HIGH"
