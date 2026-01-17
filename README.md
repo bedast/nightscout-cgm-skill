@@ -146,6 +146,22 @@ $env:NIGHTSCOUT_URL = "https://your-nightscout-site.com/api/v1/entries.json?toke
 [Environment]::SetEnvironmentVariable("NIGHTSCOUT_URL", "https://your-nightscout-site.com/api/v1/entries.json?token=YOUR_API_SECRET", "User")
 ```
 
+## Getting Started
+
+After installation and configuration, fetch your data:
+
+```bash
+# Fetch last 90 days of CGM data (creates local database automatically)
+python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py refresh
+
+# Verify it's working
+python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py current
+```
+
+This creates a local SQLite database (`cgm_data.db`) in the skill folder. The database is automatically created on first run - you don't need to set anything up.
+
+**How often to refresh?** The skill caches data locally for fast queries. Run `refresh` periodically (daily or weekly) to pull in new readings, or just ask the AI to "refresh my CGM data".
+
 ## Usage
 
 ### With AI Agents
