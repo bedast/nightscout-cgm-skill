@@ -118,6 +118,17 @@ Just ask naturally:
 - "What's my estimated A1C?"
 - "Show me my time in range"
 
+**Pattern Analysis** - ask sophisticated questions:
+- "What patterns do you see in my data?"
+- "What's happening on Tuesdays after lunch?"
+- "When are my worst times for blood sugar control?"
+- "How are my overnight numbers?"
+- "When do I tend to go low?"
+- "What day of the week is my best for time-in-range?"
+- "Show me my morning patterns"
+- "Show me a heatmap of my glucose"
+- "What does Saturday look like?"
+
 ### Direct CLI Usage
 
 ```bash
@@ -129,6 +140,21 @@ python scripts/cgm.py analyze
 
 # Analyze last 30 days
 python scripts/cgm.py analyze --days 30
+
+# Find patterns automatically (best/worst times, problem areas)
+python scripts/cgm.py patterns
+
+# What happens on Tuesdays after lunch?
+python scripts/cgm.py query --day Tuesday --hour-start 12 --hour-end 15
+
+# How are my overnight numbers on weekends?
+python scripts/cgm.py query --day Saturday --hour-start 22 --hour-end 6
+
+# Show ASCII heatmap (works inside Copilot)
+python scripts/cgm.py chart --heatmap
+
+# Show day chart with colors (direct terminal)
+python scripts/cgm.py chart --day Saturday --color
 
 # Refresh data from Nightscout
 python scripts/cgm.py refresh --days 90
