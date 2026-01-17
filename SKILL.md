@@ -9,11 +9,13 @@ This skill provides tools for fetching and analyzing Continuous Glucose Monitor 
 
 ## Available Commands
 
-Run commands from the skill's scripts directory:
+Run the `cgm.py` script from this skill's `scripts/` directory:
 
 ```bash
-python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py <command> [options]
+python <skill-path>/scripts/cgm.py <command> [options]
 ```
+
+Where `<skill-path>` is the location where this skill is installed (e.g., `~/.copilot/skills/nightscout-cgm`, `.github/skills/nightscout-cgm`, or `.claude/skills/nightscout-cgm`).
 
 ### Commands
 
@@ -27,13 +29,13 @@ python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py <command> [options]
 
 ```bash
 # Get current glucose
-python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py current
+python scripts/cgm.py current
 
 # Analyze last 30 days
-python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py analyze --days 30
+python scripts/cgm.py analyze --days 30
 
 # Refresh data from Nightscout
-python ~/.copilot/skills/nightscout-cgm/scripts/cgm.py refresh
+python scripts/cgm.py refresh
 ```
 
 ## Output Interpretation
