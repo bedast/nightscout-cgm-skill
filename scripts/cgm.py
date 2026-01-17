@@ -34,44 +34,51 @@ if not API_BASE:
 # Derive the API root from the entries URL
 API_ROOT = API_BASE.replace("/entries.json", "").rstrip("/")
 
-# Unit configuration - fetched from Nightscout settings
-_cached_units = None
+# Nightscout settings cache
+_cached_settings = None
 
-def get_nightscout_units():
-    """Fetch the display units from Nightscout server settings."""
-    global _cached_units
-    if _cached_units is not None:
-        return _cached_units
+def get_nightscout_settings():
+    """Fetch settings from Nightscout server (cached)."""
+    global _cached_settings
+    if _cached_settings is not None:
+        return _cached_settings
     
     try:
         resp = requests.get(f"{API_ROOT}/status.json", timeout=10)
         resp.raise_for_status()
-        settings = resp.json().get("settings", {})
-        units = settings.get("units", "mg/dl")
-        _cached_units = units.lower().startswith("mmol")
+        _cached_settings = resp.json().get("settings", {})
     except Exception:
-        _cached_units = False  # Default to mg/dL on error
+        _cached_settings = {}
     
-    return _cached_units
+    return _cached_settings
+
+def use_mmol():
+    """Check if Nightscout is configured for mmol/L."""
+    units = get_nightscout_settings().get("units", "mg/dl")
+    return units.lower().startswith("mmol")
 
 def convert_glucose(value_mgdl):
     """Convert mg/dL to mmol/L if Nightscout is configured for mmol."""
-    if get_nightscout_units():
+    if use_mmol():
         return round(value_mgdl / 18.0182, 1)
     return value_mgdl
 
 def get_unit_label():
     """Get the appropriate unit label based on Nightscout settings."""
-    return "mmol/L" if get_nightscout_units() else "mg/dL"
+    return "mmol/L" if use_mmol() else "mg/dL"
+
+def get_thresholds():
+    """Get glucose thresholds from Nightscout settings (in mg/dL)."""
+    thresholds = get_nightscout_settings().get("thresholds", {})
+    return {
+        "urgent_low": thresholds.get("bgLow", 55),
+        "low": 70,  # Standard low threshold
+        "target_low": thresholds.get("bgTargetBottom", 70),
+        "target_high": thresholds.get("bgTargetTop", 180),
+        "high": thresholds.get("bgHigh", 250),
+    }
 SKILL_DIR = Path(__file__).parent.parent
 DB_PATH = SKILL_DIR / "cgm_data.db"
-
-# Glucose ranges (mg/dL)
-VERY_LOW = 54
-LOW = 70
-TARGET_LOW = 70
-TARGET_HIGH = 180
-HIGH = 250
 
 
 def create_database():
@@ -168,16 +175,17 @@ def get_stats(values):
 
 
 def get_time_in_range(values):
-    """Calculate time-in-range percentages."""
+    """Calculate time-in-range percentages using Nightscout thresholds."""
     if not values:
         return {}
+    t = get_thresholds()
     n = len(values)
     return {
-        "very_low_pct": round(sum(1 for v in values if v < VERY_LOW) / n * 100, 1),
-        "low_pct": round(sum(1 for v in values if VERY_LOW <= v < LOW) / n * 100, 1),
-        "in_range_pct": round(sum(1 for v in values if TARGET_LOW <= v <= TARGET_HIGH) / n * 100, 1),
-        "high_pct": round(sum(1 for v in values if TARGET_HIGH < v <= HIGH) / n * 100, 1),
-        "very_high_pct": round(sum(1 for v in values if v > HIGH) / n * 100, 1),
+        "very_low_pct": round(sum(1 for v in values if v < t["urgent_low"]) / n * 100, 1),
+        "low_pct": round(sum(1 for v in values if t["urgent_low"] <= v < t["target_low"]) / n * 100, 1),
+        "in_range_pct": round(sum(1 for v in values if t["target_low"] <= v <= t["target_high"]) / n * 100, 1),
+        "high_pct": round(sum(1 for v in values if t["target_high"] < v <= t["high"]) / n * 100, 1),
+        "very_high_pct": round(sum(1 for v in values if v > t["high"]) / n * 100, 1),
     }
 
 
@@ -204,10 +212,13 @@ def analyze_cgm(days=90):
     tir = get_time_in_range(values)
 
     # GMI (Glucose Management Indicator) - estimated A1C
-    gmi = round(3.31 + (0.02392 * stats["mean"]), 1)
+    # Uses raw mg/dL mean, not converted value
+    raw_mean = sum(values) / len(values)
+    gmi = round(3.31 + (0.02392 * raw_mean), 1)
     
-    # Coefficient of Variation
-    cv = round((stats["std"] / stats["mean"]) * 100, 1) if stats["mean"] else 0
+    # Coefficient of Variation (uses raw values)
+    raw_std = (sum((x - raw_mean) ** 2 for x in values) / len(values)) ** 0.5
+    cv = round((raw_std / raw_mean) * 100, 1) if raw_mean else 0
 
     # Hourly breakdown
     hourly = defaultdict(list)
@@ -249,14 +260,15 @@ def get_current_glucose():
     if data:
         e = data[0]
         sgv = e.get("sgv", 0)
+        t = get_thresholds()
         
-        if sgv < VERY_LOW:
+        if sgv < t["urgent_low"]:
             status = "VERY LOW - urgent"
-        elif sgv < LOW:
+        elif sgv < t["target_low"]:
             status = "low"
-        elif sgv <= TARGET_HIGH:
+        elif sgv <= t["target_high"]:
             status = "in range"
-        elif sgv <= HIGH:
+        elif sgv <= t["high"]:
             status = "high"
         else:
             status = "VERY HIGH"

@@ -129,12 +129,16 @@ python scripts/cgm.py refresh --days 90
 
 ## Glucose Ranges
 
-This skill displays values in the units configured in your Nightscout instance (`DISPLAY_UNITS` setting). The script automatically detects whether your Nightscout is set to mg/dL or mmol/L.
+This skill uses your **Nightscout configuration**:
+- **Units**: Automatically detected from your `DISPLAY_UNITS` setting (mg/dL or mmol/L)
+- **Thresholds**: Uses your configured `bgLow`, `bgTargetBottom`, `bgTargetTop`, and `bgHigh` values
+
+Default thresholds (if not configured in Nightscout):
 
 | Range | mg/dL | mmol/L | Status |
 |-------|-------|--------|--------|
-| Very Low | <54 | <3.0 | Dangerous hypoglycemia |
-| Low | 54-69 | 3.0-3.8 | Hypoglycemia |
+| Very Low | <55 | <3.0 | Dangerous hypoglycemia |
+| Low | 55-69 | 3.0-3.8 | Hypoglycemia |
 | In Range | 70-180 | 3.9-10.0 | Target range |
 | High | 181-250 | 10.1-13.9 | Hyperglycemia |
 | Very High | >250 | >13.9 | Significant hyperglycemia |
