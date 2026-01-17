@@ -375,14 +375,22 @@ def show_sparkline(hours=24, use_color=True):
         spark_str = "".join(sparkline)
         print(f"\n{BOLD}Glucose Sparkline ({hours}h){RESET}")
         print(f"  {first_dt.strftime('%H:%M')} {spark_str} {last_dt.strftime('%H:%M')}")
-        print(f"\n  {GREEN}█{RESET} In Range  {YELLOW}█{RESET} Low/High  {RED}█{RESET} Urgent")
+        print(f"\n  {GREEN}█{RESET} In Range ({convert_glucose(t['target_low'])}-{convert_glucose(t['target_high'])} {get_unit_label()})  {YELLOW}█{RESET} Low/High  {RED}█{RESET} Urgent")
     else:
         # ASCII mode - no colors
         spark_str = make_sparkline(values)
         print(f"\nGlucose Sparkline ({hours}h)")
         print(f"  {first_dt.strftime('%H:%M')} {spark_str} {last_dt.strftime('%H:%M')}")
+        print(f"\n  Target: {convert_glucose(t['target_low'])}-{convert_glucose(t['target_high'])} {get_unit_label()}")
     
-    print(f"\n  Readings: {len(values)} | Avg: {convert_glucose(avg)} | Range: {convert_glucose(min_v)}-{convert_glucose(max_v)} | TIR: {tir:.0f}%")
+    # Format average with proper precision
+    avg_display = convert_glucose(avg)
+    if use_mmol():
+        avg_str = f"{avg_display:.1f}"
+    else:
+        avg_str = f"{avg_display:.0f}"
+    
+    print(f"\n  Readings: {len(values)} | Avg: {avg_str} {get_unit_label()} | Range: {convert_glucose(min_v)}-{convert_glucose(max_v)} | TIR: {tir:.0f}%")
     print()
 
 
