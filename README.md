@@ -416,7 +416,7 @@ This skill reads your `DISPLAY_UNITS` setting and converts automatically - you d
 
 The skill has 150 tests covering all functionality:
 
-`ash
+```bash
 cd ~/.copilot/skills/nightscout-cgm
 
 # Run all tests
@@ -430,7 +430,7 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 
 # Run specific test file
 python -m pytest tests/test_real_data.py -v
-`
+```
 
 **Always run tests before and after modifying cgm.py.**
 
@@ -438,11 +438,11 @@ python -m pytest tests/test_real_data.py -v
 
 | File | Description |
 |------|-------------|
-| 	est_pure_functions.py | Unit conversion, stats, sparklines |
-| 	est_database.py | SQLite storage operations |
-| 	est_analysis.py | Pattern analysis, worst days |
-| 	est_charts.py | Chart rendering output |
-| 	est_cli.py | Command-line argument parsing |
-| 	est_edge_cases.py | Error handling, boundaries |
-| 	est_real_data.py | Tests using real Nightscout API responses |
+| test_pure_functions.py | Unit conversion, stats, sparklines |
+| test_database.py | SQLite storage operations |
+| test_analysis.py | Pattern analysis, worst days |
+| test_charts.py | Chart rendering output |
+| test_cli.py | Command-line argument parsing |
+| test_edge_cases.py | Error handling, boundaries |
+| test_real_data.py | Tests using real Nightscout API responses |
 
