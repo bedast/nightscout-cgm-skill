@@ -4537,7 +4537,8 @@ def generate_agp_report(days=14, output_path=None):
         except (ValueError, TypeError):
             pass
     
-    # Get dates for daily profiles (limited to the number of days requested)
+    # Get dates for daily profiles (show most recent days with data, up to requested days count)
+    # This ensures we show the most recent data even if there are gaps
     all_dates = sorted(daily_profiles.keys())[-days:]
     
     daily_profile_data = []
