@@ -689,3 +689,179 @@ class TestReportDataIntegrity:
         # Check initial days is set
         assert "currentDays = 30" in content or "let currentDays = 30" in content
 
+
+
+class TestGenerateAgpReport:
+    """Tests for generate_agp_report function (AGP = Ambulatory Glucose Profile)."""
+    
+    def test_generates_agp_html_file(self, cgm_module, populated_db, tmp_path):
+        """Should generate an AGP HTML file at the specified path."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        result = cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        assert "error" not in result
+        assert result["status"] == "success"
+        assert output_path.exists()
+    
+    def test_agp_html_contains_required_sections(self, cgm_module, populated_db, tmp_path):
+        """AGP HTML should contain all standard AGP sections."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        content = output_path.read_text(encoding="utf-8")
+        
+        # Check for AGP standard sections
+        assert "Ambulatory Glucose Profile" in content
+        assert "Glucose Statistics" in content
+        assert "Time in Ranges" in content
+        assert "Daily Glucose Profiles" in content
+        assert "GMI" in content
+    
+    def test_agp_calculates_standard_percentiles(self, cgm_module, populated_db, tmp_path):
+        """AGP should calculate standard percentiles (5, 25, 50, 75, 95)."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        content = output_path.read_text(encoding="utf-8")
+        
+        # Check that percentile data is present
+        assert "p5" in content or "5th" in content
+        assert "p25" in content or "25th" in content
+        assert "p50" in content or "50th" in content or "Median" in content
+        assert "p75" in content or "75th" in content
+        assert "p95" in content or "95th" in content
+    
+    def test_agp_returns_correct_result_structure(self, cgm_module, populated_db, tmp_path):
+        """AGP result should have expected fields including unique_days."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        result = cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        assert "status" in result
+        assert "report" in result
+        assert "readings" in result
+        assert "date_range" in result
+        assert "unique_days" in result
+        assert result["status"] == "success"
+    
+    def test_agp_default_14_days(self, cgm_module, populated_db, tmp_path):
+        """AGP should default to 14 days, which is the standard AGP period."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        result = cgm_module.generate_agp_report(
+                            output_path=str(output_path)
+                        )
+        
+        assert result["days_analyzed"] == 14
+    
+    def test_agp_is_print_friendly(self, cgm_module, populated_db, tmp_path):
+        """AGP should have print-friendly CSS."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        content = output_path.read_text(encoding="utf-8")
+        
+        # Check for print media query
+        assert "@media print" in content
+        assert "no-print" in content
+    
+    def test_agp_handles_empty_data(self, cgm_module, temp_db, tmp_path):
+        """AGP should handle empty database gracefully."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", temp_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                result = cgm_module.generate_agp_report(
+                    days=14,
+                    output_path=str(output_path)
+                )
+        
+        assert "error" in result
+        assert "No data found" in result["error"]
+    
+    def test_agp_includes_time_in_range_bar(self, cgm_module, populated_db, tmp_path):
+        """AGP should include visual time-in-range bar chart."""
+        output_path = tmp_path / "test_agp.html"
+        
+        with patch.object(cgm_module, "DB_PATH", populated_db):
+            with patch.object(cgm_module, "ensure_data", return_value=True):
+                with patch.object(cgm_module, "use_mmol", return_value=False):
+                    with patch.object(cgm_module, "get_thresholds", return_value={
+                        "urgent_low": 55, "target_low": 70,
+                        "target_high": 180, "urgent_high": 250
+                    }):
+                        cgm_module.generate_agp_report(
+                            days=14,
+                            output_path=str(output_path)
+                        )
+        
+        content = output_path.read_text(encoding="utf-8")
+        
+        # Check for TIR bar elements
+        assert "tir-bar" in content
+        assert "tir-very-low" in content
+        assert "tir-low" in content
+        assert "tir-in-range" in content
+        assert "tir-high" in content
+        assert "tir-very-high" in content
