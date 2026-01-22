@@ -39,6 +39,24 @@ Where `<skill-path>` is the location where this skill is installed (e.g., `~/.co
 | `day <date> [options]` | View all readings for a specific date |
 | `worst [options]` | Find your worst days for glucose control |
 | `chart [options]` | Terminal visualizations (heatmap, sparkline, day chart) |
+| `report [--days N]` | Generate interactive HTML report with charts |
+
+### Report Command
+
+Generate a comprehensive, self-contained HTML report with interactive charts:
+- `--days N` - Number of days to include (default: 90)
+- `--output PATH` - Custom output path (default: nightscout_report.html)
+- `--open` - Open report in browser after generating
+
+**Report Features:**
+- Interactive date controls (7d/14d/30d/90d/6mo/1yr/All + custom date pickers)
+- All charts recalculate dynamically in browser
+- Time-in-Range pie chart
+- Modal Day (24-hour profile with percentile bands)
+- Daily trends, Day of week comparison
+- Glucose histogram, Heatmap with hover tooltips
+- Weekly summary
+- Key stats: TIR%, GMI (estimated A1C), CV (variability)
 
 ### Day Command
 
@@ -80,6 +98,9 @@ The `chart` command creates terminal visualizations:
 ```bash
 # Get current glucose
 python scripts/cgm.py current
+
+# Generate interactive HTML report (opens in browser)
+python scripts/cgm.py report --days 90 --open
 
 # Analyze last 30 days
 python scripts/cgm.py analyze --days 30
@@ -124,6 +145,7 @@ python scripts/cgm.py refresh
 With the pattern analysis capabilities, you can ask natural questions like:
 
 - "What's my current glucose?"
+- "Generate a report of my last 90 days"
 - "Analyze my blood sugar for the last 30 days"
 - "What patterns do you see in my data?"
 - "What's happening on Tuesdays after lunch?"
