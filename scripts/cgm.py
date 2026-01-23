@@ -100,8 +100,14 @@ def get_thresholds():
         "urgent_high": thresholds.get("bgHigh", 250),
     }
 
-SKILL_DIR= Path(__file__).parent.parent
+SKILL_DIR = Path(__file__).parent.parent
 DB_PATH = SKILL_DIR / "cgm_data.db"
+
+# Trend alert detection thresholds
+HIGH_SEVERITY_DAY_THRESHOLD = 3  # Number of unique days to trigger high severity
+SIGNIFICANT_TIR_CHANGE = 5  # Percentage change in TIR to be considered significant
+OVERNIGHT_START_HOUR = 22  # Hour when overnight period begins
+OVERNIGHT_END_HOUR = 6  # Hour when overnight period ends
 
 
 def create_database():
@@ -1028,6 +1034,265 @@ def find_patterns(days=90):
     }
 
 
+def detect_trend_alerts(days=90, min_occurrences=2):
+    """
+    Detect concerning patterns and trends in CGM data.
+    Proactively surfaces issues like recurring lows/highs.
+    
+    Args:
+        days: Number of days to analyze
+        min_occurrences: Minimum number of occurrences to trigger an alert (default: 2)
+    
+    Returns:
+        Dictionary with detected alerts categorized by type
+    """
+    if not ensure_data(days):
+        return {"error": "Could not fetch data from Nightscout. Check your NIGHTSCOUT_URL."}
+    
+    conn = sqlite3.connect(DB_PATH)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    
+    rows = conn.execute(
+        "SELECT sgv, date_ms, date_string FROM readings WHERE date_ms >= ? AND sgv > 0 ORDER BY date_ms",
+        (cutoff_ms,)
+    ).fetchall()
+    conn.close()
+    
+    if not rows:
+        return {"error": "No data found for the specified period."}
+    
+    t = get_thresholds()
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    
+    # Track events by various dimensions
+    lows_by_hour = defaultdict(list)
+    lows_by_day = defaultdict(list)
+    lows_by_day_hour = defaultdict(list)
+    highs_by_hour = defaultdict(list)
+    highs_by_day = defaultdict(list)
+    highs_by_day_hour = defaultdict(list)
+    
+    # Track weekly patterns (week number for trending)
+    lows_by_week = defaultdict(int)
+    highs_by_week = defaultdict(int)
+    tir_by_week = defaultdict(lambda: {"in_range": 0, "total": 0})
+    
+    for sgv, date_ms, ds in rows:
+        try:
+            dt = datetime.fromisoformat(ds.replace("Z", "+00:00"))
+            week_num = dt.isocalendar()[1]
+            
+            # Track time in range by week for trend analysis
+            tir_by_week[week_num]["total"] += 1
+            if t["target_low"] <= sgv <= t["target_high"]:
+                tir_by_week[week_num]["in_range"] += 1
+            
+            # Track low events
+            if sgv < t["target_low"]:
+                lows_by_hour[dt.hour].append((sgv, dt))
+                lows_by_day[dt.weekday()].append((sgv, dt))
+                lows_by_day_hour[(dt.weekday(), dt.hour)].append((sgv, dt))
+                lows_by_week[week_num] += 1
+            
+            # Track high events  
+            elif sgv > t["target_high"]:
+                highs_by_hour[dt.hour].append((sgv, dt))
+                highs_by_day[dt.weekday()].append((sgv, dt))
+                highs_by_day_hour[(dt.weekday(), dt.hour)].append((sgv, dt))
+                highs_by_week[week_num] += 1
+        except (ValueError, TypeError):
+            pass
+    
+    alerts = []
+    
+    # Detect recurring low patterns by time of day
+    for hour, events in lows_by_hour.items():
+        if len(events) >= min_occurrences:
+            # Count unique days to avoid counting multiple lows on same day
+            unique_days = len(set(dt.date() for _, dt in events))
+            if unique_days >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                alerts.append({
+                    "severity": "high" if unique_days >= HIGH_SEVERITY_DAY_THRESHOLD else "medium",
+                    "category": "recurring_lows",
+                    "pattern": f"time_of_day",
+                    "message": f"You've had {unique_days} lows around {hour:02d}:00 in the last {days} days",
+                    "details": {
+                        "hour": hour,
+                        "occurrences": len(events),
+                        "unique_days": unique_days,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Detect recurring low patterns by day of week
+    for day, events in lows_by_day.items():
+        if len(events) >= min_occurrences:
+            unique_weeks = len(set((dt.isocalendar()[0], dt.isocalendar()[1]) for _, dt in events))
+            if unique_weeks >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                alerts.append({
+                    "severity": "medium",
+                    "category": "recurring_lows",
+                    "pattern": "day_of_week",
+                    "message": f"{day_names[day]}s tend to have lows ({len(events)} events over {unique_weeks} weeks)",
+                    "details": {
+                        "day": day_names[day],
+                        "occurrences": len(events),
+                        "unique_weeks": unique_weeks,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Detect recurring high patterns by time of day
+    for hour, events in highs_by_hour.items():
+        if len(events) >= min_occurrences:
+            unique_days = len(set(dt.date() for _, dt in events))
+            if unique_days >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                alerts.append({
+                    "severity": "medium",
+                    "category": "recurring_highs",
+                    "pattern": "time_of_day",
+                    "message": f"Consistently high around {hour:02d}:00 ({unique_days} days in the last {days} days)",
+                    "details": {
+                        "hour": hour,
+                        "occurrences": len(events),
+                        "unique_days": unique_days,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Detect recurring high patterns by day of week
+    for day, events in highs_by_day.items():
+        if len(events) >= min_occurrences:
+            unique_weeks = len(set((dt.isocalendar()[0], dt.isocalendar()[1]) for _, dt in events))
+            if unique_weeks >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                alerts.append({
+                    "severity": "medium",
+                    "category": "recurring_highs",
+                    "pattern": "day_of_week",
+                    "message": f"{day_names[day]}s are consistently high ({len(events)} events over {unique_weeks} weeks)",
+                    "details": {
+                        "day": day_names[day],
+                        "occurrences": len(events),
+                        "unique_weeks": unique_weeks,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Detect specific day+hour combinations (e.g., "Friday lunches are consistently high")
+    for (day, hour), events in highs_by_day_hour.items():
+        if len(events) >= min_occurrences:
+            unique_weeks = len(set((dt.isocalendar()[0], dt.isocalendar()[1]) for _, dt in events))
+            if unique_weeks >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                time_label = "lunch" if 11 <= hour <= 14 else "dinner" if 17 <= hour <= 20 else "breakfast" if 6 <= hour <= 9 else f"{hour:02d}:00"
+                alerts.append({
+                    "severity": "medium",
+                    "category": "recurring_highs",
+                    "pattern": "day_hour_combination",
+                    "message": f"{day_names[day]} {time_label} is consistently high",
+                    "details": {
+                        "day": day_names[day],
+                        "hour": hour,
+                        "time_label": time_label,
+                        "occurrences": len(events),
+                        "unique_weeks": unique_weeks,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Similar for low patterns at specific day+hour
+    for (day, hour), events in lows_by_day_hour.items():
+        if len(events) >= min_occurrences:
+            unique_weeks = len(set((dt.isocalendar()[0], dt.isocalendar()[1]) for _, dt in events))
+            if unique_weeks >= min_occurrences:
+                avg_glucose = sum(sgv for sgv, _ in events) / len(events)
+                time_label = "lunch" if 11 <= hour <= 14 else "dinner" if 17 <= hour <= 20 else "breakfast" if 6 <= hour <= 9 else "overnight" if hour < OVERNIGHT_END_HOUR or hour >= OVERNIGHT_START_HOUR else f"{hour:02d}:00"
+                
+                # Overnight lows are particularly concerning
+                severity = "high" if (hour < OVERNIGHT_END_HOUR or hour >= OVERNIGHT_START_HOUR) else "medium"
+                alerts.append({
+                    "severity": severity,
+                    "category": "recurring_lows",
+                    "pattern": "day_hour_combination",
+                    "message": f"{day_names[day]} {time_label} has recurring lows",
+                    "details": {
+                        "day": day_names[day],
+                        "hour": hour,
+                        "time_label": time_label,
+                        "occurrences": len(events),
+                        "unique_weeks": unique_weeks,
+                        "avg_glucose": convert_glucose(round(avg_glucose, 0)),
+                        "unit": get_unit_label()
+                    }
+                })
+    
+    # Detect improving/worsening trends in TIR
+    if len(tir_by_week) >= 3:
+        sorted_weeks = sorted(tir_by_week.keys())
+        recent_weeks = sorted_weeks[-3:]  # Last 3 weeks
+        older_weeks = sorted_weeks[-6:-3] if len(sorted_weeks) >= 6 else sorted_weeks[:-3]
+        
+        if older_weeks:
+            recent_tir = sum(tir_by_week[w]["in_range"] / tir_by_week[w]["total"] * 100 
+                           for w in recent_weeks) / len(recent_weeks)
+            older_tir = sum(tir_by_week[w]["in_range"] / tir_by_week[w]["total"] * 100 
+                          for w in older_weeks) / len(older_weeks)
+            
+            change = recent_tir - older_tir
+            
+            if abs(change) >= SIGNIFICANT_TIR_CHANGE:  # Significant change threshold
+                if change > 0:
+                    alerts.append({
+                        "severity": "low",
+                        "category": "trend_improvement",
+                        "pattern": "time_in_range_trend",
+                        "message": f"Your control has improved {abs(change):.1f}% in recent weeks",
+                        "details": {
+                            "recent_tir": round(recent_tir, 1),
+                            "older_tir": round(older_tir, 1),
+                            "change": round(change, 1)
+                        }
+                    })
+                else:
+                    alerts.append({
+                        "severity": "medium",
+                        "category": "trend_worsening",
+                        "pattern": "time_in_range_trend",
+                        "message": f"Your control has declined {abs(change):.1f}% in recent weeks",
+                        "details": {
+                            "recent_tir": round(recent_tir, 1),
+                            "older_tir": round(older_tir, 1),
+                            "change": round(change, 1)
+                        }
+                    })
+    
+    # Sort alerts by severity (high > medium > low)
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    alerts.sort(key=lambda x: severity_order.get(x["severity"], 99))
+    
+    return {
+        "days_analyzed": days,
+        "alert_count": len(alerts),
+        "alerts": alerts,
+        "thresholds": {
+            "min_occurrences": min_occurrences,
+            "target_low": convert_glucose(t["target_low"]),
+            "target_high": convert_glucose(t["target_high"]),
+            "unit": get_unit_label()
+        }
+    }
+
+
 def parse_date_arg(date_str):
     """Parse a date argument like 'today', 'yesterday', '2026-01-16', or 'Jan 16'."""
     date_str = date_str.lower().strip()
@@ -1452,6 +1717,12 @@ def generate_html_report(days=90, output_path=None):
     last_date = rows[-1][2][:10] if rows[-1][2] else "unknown"
     
     # =========================================================================
+    # Detect Trend Alerts
+    # =========================================================================
+    alerts_result = detect_trend_alerts(days, min_occurrences=2)
+    alerts = alerts_result.get("alerts", []) if "error" not in alerts_result else []
+    
+    # =========================================================================
     # HTML Template with embedded Chart.js
     # =========================================================================
     
@@ -1628,6 +1899,183 @@ def generate_html_report(days=90, output_path=None):
         .stat-card.tir .value { color: var(--in-range); }
         .stat-card.gmi .value { color: var(--info); }
         .stat-card.cv .value { color: var(--warning); }
+        
+        .alerts-section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .alerts-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .alerts-header:hover {
+            opacity: 0.8;
+        }
+        
+        .alerts-section.collapsed .alerts-header {
+            margin-bottom: 0;
+        }
+        
+        .alerts-section:not(.collapsed) .alerts-header {
+            margin-bottom: 15px;
+        }
+        
+        .alerts-toggle {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            transition: transform 0.2s;
+        }
+        
+        .alerts-section:not(.collapsed) .alerts-toggle {
+            transform: rotate(90deg);
+        }
+        
+        .alerts-body {
+            display: none;
+        }
+        
+        .alerts-section:not(.collapsed) .alerts-body {
+            display: block;
+        }
+        
+        .alerts-section h2 {
+            margin: 0;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .alerts-section h2::before {
+            content: '⚠️';
+            font-size: 1.5rem;
+        }
+        
+        .alerts-summary {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-right: 10px;
+        }
+        
+        .alert-badge {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .alert-badge.high {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+        
+        .alert-badge.medium {
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--warning);
+        }
+        
+        .alerts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .alert-item {
+            background: var(--bg-card);
+            border-left: 4px solid;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            align-items: start;
+            gap: 12px;
+        }
+        
+        .alert-item.severity-high {
+            border-left-color: var(--danger);
+        }
+        
+        .alert-item.severity-medium {
+            border-left-color: var(--warning);
+        }
+        
+        .alert-item.severity-low {
+            border-left-color: var(--info);
+        }
+        
+        .alert-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        
+        .alert-content {
+            flex: 1;
+        }
+        
+        .alert-message {
+            font-size: 1rem;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+        
+        .alert-details {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        .alerts-expand {
+            margin-top: 12px;
+            text-align: center;
+        }
+        
+        .alerts-expand button {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        
+        .alerts-expand button:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+        
+        .hidden-alerts {
+            display: none;
+        }
+        
+        .hidden-alerts.expanded {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        
+        .no-alerts {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-secondary);
+        }
+        
+        .no-alerts-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            color: var(--success);
+        }
         
         .chart-section {
             background: var(--bg-secondary);
@@ -1858,6 +2306,26 @@ def generate_html_report(days=90, output_path=None):
             </div>
         </div>
         
+        <!-- Trend Alerts (collapsed by default) -->
+        <div class="alerts-section collapsed" id="alertsSection">
+            <div class="alerts-header" onclick="toggleAlertsSection()">
+                <h2>Trend Alerts</h2>
+                <div class="alerts-summary" id="alertsSummary"></div>
+                <span class="alerts-toggle">▶</span>
+            </div>
+            <div class="alerts-body" id="alertsBody">
+                <div class="alerts-container" id="alertsContainer">
+                    <!-- Top alerts will be rendered here by JavaScript -->
+                </div>
+                <div class="hidden-alerts" id="hiddenAlerts">
+                    <!-- Additional alerts shown when expanded -->
+                </div>
+                <div class="alerts-expand" id="alertsExpand" style="display: none;">
+                    <button onclick="toggleMoreAlerts(event)">Show all alerts</button>
+                </div>
+            </div>
+        </div>
+        
         <!-- Time in Range Pie Chart -->
         <div class="chart-section">
             <h2>Time in Range Distribution</h2>
@@ -1953,6 +2421,9 @@ def generate_html_report(days=90, output_path=None):
         };
         const unit = '%(unit)s';
         const isMMOL = %(is_mmol_js)s;
+        
+        // Alerts data from Python
+        const allAlerts = %(alerts_json)s;
         
         // Current filter state
         let currentDays = %(initial_days)s;
@@ -2770,6 +3241,287 @@ def generate_html_report(days=90, output_path=None):
         
         // Initialize date controls
         initDateControls();
+        
+        // Render alerts
+        renderAlerts();
+        
+        // Function to render alerts
+        function renderAlerts() {
+            const container = document.getElementById('alertsContainer');
+            const hiddenContainer = document.getElementById('hiddenAlerts');
+            const expandBtn = document.getElementById('alertsExpand');
+            const summaryDiv = document.getElementById('alertsSummary');
+            const section = document.getElementById('alertsSection');
+            
+            if (!allAlerts || allAlerts.length === 0) {
+                container.innerHTML = `
+                    <div class="no-alerts">
+                        <div class="no-alerts-icon">✅</div>
+                        <div>No concerning patterns detected. Great job!</div>
+                    </div>
+                `;
+                summaryDiv.innerHTML = '';
+                return;
+            }
+            
+            // Group and summarize alerts (returns max 10 most impactful)
+            const summarized = summarizeAlerts(allAlerts);
+            
+            if (summarized.length === 0) {
+                container.innerHTML = `
+                    <div class="no-alerts">
+                        <div class="no-alerts-icon">✅</div>
+                        <div>No significant patterns detected. Keep up the good work!</div>
+                    </div>
+                `;
+                summaryDiv.innerHTML = '';
+                expandBtn.style.display = 'none';
+                return;
+            }
+            
+            // Count high priority only (don't show overwhelming counts)
+            const highCount = summarized.filter(a => a.severity === 'high').length;
+            
+            // Render simple summary - just high priority if any
+            let summaryHTML = '';
+            if (highCount > 0) {
+                summaryHTML = `<span class="alert-badge high">🔴 ${highCount} need${highCount === 1 ? 's' : ''} attention</span>`;
+            } else {
+                summaryHTML = `<span class="alert-badge medium">🟡 ${summarized.length} pattern${summarized.length === 1 ? '' : 's'} to review</span>`;
+            }
+            summaryDiv.innerHTML = summaryHTML;
+            
+            // Show top 5 alerts, hide rest (up to 5 more)
+            const maxVisible = 5;
+            const visibleAlerts = summarized.slice(0, maxVisible);
+            const hiddenAlerts = summarized.slice(maxVisible);
+            
+            container.innerHTML = visibleAlerts.map(alert => renderAlertItem(alert)).join('');
+            
+            if (hiddenAlerts.length > 0) {
+                hiddenContainer.innerHTML = hiddenAlerts.map(alert => renderAlertItem(alert)).join('');
+                expandBtn.style.display = 'block';
+                expandBtn.querySelector('button').textContent = `Show ${hiddenAlerts.length} more`;
+            } else {
+                expandBtn.style.display = 'none';
+            }
+        }
+        
+        function summarizeAlerts(alerts) {
+            // Filter: require 3+ days minimum to be a real pattern
+            const significantAlerts = alerts.filter(alert => {
+                const days = alert.details?.unique_days || alert.details?.unique_weeks || 0;
+                return days >= 3;
+            });
+            
+            // Group alerts by time blocks and category
+            const groups = {};
+            
+            significantAlerts.forEach(alert => {
+                const key = getAlertGroupKey(alert);
+                if (!groups[key]) {
+                    groups[key] = {
+                        alerts: [],
+                        severity: alert.severity,
+                        category: alert.category,
+                        pattern: alert.pattern
+                    };
+                }
+                groups[key].alerts.push(alert);
+                // Upgrade severity if any alert in group is high
+                if (alert.severity === 'high') {
+                    groups[key].severity = 'high';
+                }
+            });
+            
+            // Create summarized alerts with impact scores
+            const summarized = Object.entries(groups).map(([key, group]) => {
+                let alert;
+                if (group.alerts.length === 1) {
+                    alert = { ...group.alerts[0] };
+                } else {
+                    alert = mergeAlerts(group);
+                }
+                
+                // Calculate impact score: frequency × severity × consistency
+                const occurrences = alert.details?.total_occurrences || alert.details?.occurrences || 0;
+                const days = alert.details?.unique_days || alert.details?.unique_weeks || 1;
+                const severityMultiplier = alert.severity === 'high' ? 3 : alert.severity === 'medium' ? 2 : 1;
+                
+                // Lows are more dangerous than highs
+                const categoryMultiplier = alert.category === 'recurring_lows' ? 1.5 : 1;
+                
+                alert.impactScore = occurrences * severityMultiplier * categoryMultiplier * Math.sqrt(days);
+                
+                return alert;
+            });
+            
+            // Sort by impact score (highest first)
+            summarized.sort((a, b) => b.impactScore - a.impactScore);
+            
+            // Return only top 10 most impactful
+            return summarized.slice(0, 10);
+        }
+        
+        function getAlertGroupKey(alert) {
+            const details = alert.details || {};
+            const hour = details.hour;
+            
+            // Group by time block for time_of_day patterns
+            if (alert.pattern === 'time_of_day' && hour !== undefined) {
+                const block = getTimeBlock(hour);
+                return `${alert.category}_${block}`;
+            }
+            
+            // Group day_hour_combination by day + time block
+            if (alert.pattern === 'day_hour_combination' && details.day && hour !== undefined) {
+                const block = getTimeBlock(hour);
+                return `${alert.category}_${details.day}_${block}`;
+            }
+            
+            // Keep day_of_week separate
+            if (alert.pattern === 'day_of_week') {
+                return `${alert.category}_dow_${details.day}`;
+            }
+            
+            // Default: unique key
+            return `${alert.category}_${alert.pattern}_${JSON.stringify(details)}`;
+        }
+        
+        function getTimeBlock(hour) {
+            if (hour >= 5 && hour < 10) return 'morning';
+            if (hour >= 10 && hour < 14) return 'midday';
+            if (hour >= 14 && hour < 18) return 'afternoon';
+            if (hour >= 18 && hour < 22) return 'evening';
+            return 'overnight';
+        }
+        
+        function mergeAlerts(group) {
+            const alerts = group.alerts;
+            const details = alerts[0].details || {};
+            const category = group.category;
+            
+            // Calculate combined stats
+            const totalOccurrences = alerts.reduce((sum, a) => sum + (a.details?.occurrences || 0), 0);
+            const daysValues = alerts.map(a => a.details?.unique_days).filter(d => d !== undefined);
+            const uniqueDays = daysValues.length > 0 ? Math.max(...daysValues) : null;
+            const avgGlucose = Math.round(
+                alerts.reduce((sum, a) => sum + (a.details?.avg_glucose || 0), 0) / alerts.length
+            );
+            
+            // Get hours covered
+            const hours = alerts.map(a => a.details?.hour).filter(h => h !== undefined).sort((a,b) => a-b);
+            
+            // Handle overnight wrap-around (22:00-04:00)
+            let timeRange;
+            const block = getTimeBlock(hours[0]);
+            if (block === 'overnight' && hours.length > 1) {
+                // Overnight spans across midnight, show it properly
+                const lateHours = hours.filter(h => h >= 22);
+                const earlyHours = hours.filter(h => h < 5);
+                if (lateHours.length > 0 && earlyHours.length > 0) {
+                    timeRange = `${String(Math.min(...lateHours)).padStart(2,'0')}:00-${String(Math.max(...earlyHours)).padStart(2,'0')}:00`;
+                } else if (lateHours.length > 0) {
+                    timeRange = `${String(Math.min(...lateHours)).padStart(2,'0')}:00-${String(Math.max(...lateHours)).padStart(2,'0')}:00`;
+                } else {
+                    timeRange = `${String(Math.min(...earlyHours)).padStart(2,'0')}:00-${String(Math.max(...earlyHours)).padStart(2,'0')}:00`;
+                }
+            } else {
+                timeRange = hours.length > 1 
+                    ? `${String(hours[0]).padStart(2,'0')}:00-${String(hours[hours.length-1]).padStart(2,'0')}:00`
+                    : `${String(hours[0]).padStart(2,'0')}:00`;
+            }
+            
+            // Build summary message
+            const blockName = block.charAt(0).toUpperCase() + block.slice(1);
+            const daysText = uniqueDays ? `${uniqueDays} days affected` : `${totalOccurrences} occurrences`;
+            
+            let message;
+            if (category === 'recurring_lows') {
+                message = `${blockName} lows (${timeRange}) - ${daysText}`;
+            } else if (category === 'recurring_highs') {
+                message = `${blockName} highs (${timeRange}) - ${daysText}`;
+            } else {
+                message = alerts[0].message;
+            }
+            
+            return {
+                severity: group.severity,
+                category: category,
+                pattern: 'grouped',
+                message: message,
+                details: {
+                    total_occurrences: totalOccurrences,
+                    unique_days: uniqueDays,
+                    avg_glucose: avgGlucose,
+                    unit: details.unit || 'mg/dL',
+                    hours_covered: hours
+                }
+            };
+        }
+        
+        function renderAlertItem(alert) {
+            const icon = alert.severity === 'high' ? '🔴' : 
+                       alert.severity === 'medium' ? '🟡' : '🔵';
+            
+            return `
+                <div class="alert-item severity-${alert.severity}">
+                    <div class="alert-icon">${icon}</div>
+                    <div class="alert-content">
+                        <div class="alert-message">${alert.message}</div>
+                        <div class="alert-details">${formatAlertDetails(alert)}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        let moreAlertsExpanded = false;
+        function toggleMoreAlerts(event) {
+            event.stopPropagation(); // Don't trigger section collapse
+            const hiddenContainer = document.getElementById('hiddenAlerts');
+            const btn = document.getElementById('alertsExpand').querySelector('button');
+            moreAlertsExpanded = !moreAlertsExpanded;
+            
+            if (moreAlertsExpanded) {
+                hiddenContainer.classList.add('expanded');
+                btn.textContent = 'Show fewer';
+            } else {
+                hiddenContainer.classList.remove('expanded');
+                const count = hiddenContainer.querySelectorAll('.alert-item').length;
+                btn.textContent = `Show ${count} more`;
+            }
+        }
+        
+        function toggleAlertsSection() {
+            const section = document.getElementById('alertsSection');
+            section.classList.toggle('collapsed');
+        }
+        
+        function formatAlertDetails(alert) {
+            const details = alert.details;
+            let parts = [];
+            
+            // Handle grouped alerts
+            if (details.total_occurrences) {
+                parts.push(`${details.total_occurrences} total occurrences`);
+            } else if (details.occurrences) {
+                parts.push(`${details.occurrences} occurrences`);
+            }
+            if (details.unique_days) {
+                parts.push(`${details.unique_days} days`);
+            }
+            if (details.unique_weeks) {
+                parts.push(`${details.unique_weeks} weeks`);
+            }
+            if (details.avg_glucose) {
+                parts.push(`avg: ${details.avg_glucose} ${details.unit}`);
+            }
+            if (details.recent_tir !== undefined && details.older_tir !== undefined) {
+                parts.push(`recent TIR: ${details.recent_tir}%%, previous: ${details.older_tir}%%`);
+            }
+            
+            return parts.join(' • ');
+        }
     </script>
 </body>
 </html>
@@ -2817,7 +3569,8 @@ def generate_html_report(days=90, output_path=None):
         "generated_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "all_readings_json": json.dumps(all_readings_data),
         "is_mmol_js": "true" if is_mmol else "false",
-        "initial_days": days
+        "initial_days": days,
+        "alerts_json": json.dumps(alerts)
     }
     
     # Determine output path
@@ -2892,6 +3645,19 @@ def main():
     patterns_parser.add_argument(
         "--days", type=int, default=90,
         help="Number of days to analyze (default: 90)"
+    )
+
+    # Alerts command - detect concerning recurring patterns
+    alerts_parser = subparsers.add_parser(
+        "alerts", help="Show trend alerts for concerning patterns (recurring lows/highs)"
+    )
+    alerts_parser.add_argument(
+        "--days", type=int, default=90,
+        help="Number of days to analyze (default: 90)"
+    )
+    alerts_parser.add_argument(
+        "--min-occurrences", type=int, default=2,
+        help="Minimum occurrences to trigger alert (default: 2)"
     )
 
     # Day command - view readings for a specific date
@@ -3014,6 +3780,8 @@ def main():
         )
     elif args.command == "patterns":
         result = find_patterns(args.days)
+    elif args.command == "alerts":
+        result = detect_trend_alerts(args.days, args.min_occurrences)
     elif args.command == "day":
         result = view_day(
             args.date,
