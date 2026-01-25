@@ -150,6 +150,46 @@ def ensure_data(days=90):
     return True
 
 
+def ensure_fresh_data(days=90, max_stale_minutes=30):
+    """
+    Ensure data is fresh (synced within max_stale_minutes) before major operations.
+    Auto-syncs if the most recent reading is older than the threshold.
+    
+    Args:
+        days: Number of days of data to ensure we have
+        max_stale_minutes: Maximum age of most recent reading before auto-sync (default: 30)
+    
+    Returns:
+        True if data is available and fresh, False if sync failed
+    """
+    if not DB_PATH.exists():
+        return ensure_data(days)
+    
+    conn = sqlite3.connect(DB_PATH)
+    result = conn.execute("SELECT MAX(date_ms) FROM readings").fetchone()
+    conn.close()
+    
+    if not result or not result[0]:
+        return ensure_data(days)
+    
+    latest_ms = result[0]
+    latest_time = datetime.fromtimestamp(latest_ms / 1000, tz=timezone.utc)
+    age_minutes = (datetime.now(timezone.utc) - latest_time).total_seconds() / 60
+    
+    if age_minutes > max_stale_minutes:
+        print(f"Data is {int(age_minutes)} minutes old. Auto-syncing from Nightscout...")
+        sync_result = fetch_and_store(days)
+        if "error" in sync_result:
+            print(f"Sync warning: {sync_result['error']} (using existing data)")
+            return True  # Still return True - we have some data
+        if sync_result.get("new_readings", 0) > 0:
+            print(f"Synced {sync_result['new_readings']} new readings.\n")
+        else:
+            print("Already up to date.\n")
+    
+    return True
+
+
 def fetch_and_store(days=90):
     """Fetch CGM data from Nightscout and store in database."""
     conn = create_database()
@@ -1791,7 +1831,8 @@ def generate_html_report(days=90, output_path=None):
     Returns:
         Path to the generated HTML file, or error dict
     """
-    if not ensure_data(days):
+    # Auto-sync if data is stale (>30 minutes old) before generating report
+    if not ensure_fresh_data(days):
         return {"error": "Could not fetch data from Nightscout. Check your NIGHTSCOUT_URL."}
     
     conn = sqlite3.connect(DB_PATH)
@@ -4469,7 +4510,8 @@ def generate_agp_report(days=14, output_path=None):
     Returns:
         Path to the generated HTML file, or error dict
     """
-    if not ensure_data(days):
+    # Auto-sync if data is stale (>30 minutes old) before generating report
+    if not ensure_fresh_data(days):
         return {"error": "Could not fetch data from Nightscout. Check your NIGHTSCOUT_URL."}
     
     conn = sqlite3.connect(DB_PATH)

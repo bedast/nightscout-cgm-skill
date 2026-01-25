@@ -51,6 +51,8 @@ Generate a comprehensive, self-contained HTML report with interactive charts:
 - `--output PATH` - Custom output path (default: nightscout_report.html)
 - `--open` - Open report in browser after generating
 
+**Auto-Sync:** Reports automatically sync from Nightscout if local data is more than 30 minutes old.
+
 **Report Features:**
 - Interactive date controls (7d/14d/30d/90d/6mo/1yr/All + custom date pickers)
 - All charts recalculate dynamically in browser
