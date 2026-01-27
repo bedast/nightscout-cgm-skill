@@ -2195,7 +2195,7 @@ def generate_html_report(days=90, output_path=None):
     
     if pump_data_available:
         # Fetch treatments for the report period
-        treatments_result = get_treatments(hours=days * 24)
+        treatments_result = get_treatments(hours=days * 24, limit=None)  # Get all for report
         if "error" not in treatments_result:
             treatments_data = treatments_result
         
@@ -5685,12 +5685,13 @@ def get_pump_status():
         return {"error": f"Failed to fetch pump status: {e}"}
 
 
-def get_treatments(hours=24, event_types=None):
+def get_treatments(hours=24, event_types=None, limit=20):
     """Get recent treatments (boluses, temp basals, carbs).
     
     Args:
         hours: Number of hours to look back (default: 24)
         event_types: List of event types to filter (e.g., ["Correction Bolus", "Meal Bolus", "Carb Correction"])
+        limit: Max number of each treatment type to return (default: 20, use None for all)
     """
     # Check if treatment data is available
     caps = detect_pump_capabilities()
@@ -5709,8 +5710,8 @@ def get_treatments(hours=24, event_types=None):
         
         resp = requests.get(
             f"{API_ROOT}/treatments.json",
-            params={"count": 500, "find[created_at][$gte]": cutoff_str},
-            timeout=15
+            params={"count": 5000, "find[created_at][$gte]": cutoff_str},
+            timeout=30
         )
         resp.raise_for_status()
         treatments = resp.json()
@@ -5766,9 +5767,9 @@ def get_treatments(hours=24, event_types=None):
         
         return {
             "period_hours": hours,
-            "boluses": boluses[:20],  # Limit to most recent 20
-            "temp_basals": temp_basals[:20],
-            "carbs": carbs[:20],
+            "boluses": boluses[:limit] if limit else boluses,
+            "temp_basals": temp_basals[:limit] if limit else temp_basals,
+            "carbs": carbs[:limit] if limit else carbs,
             "other": other[:10] if other else [],
             "summary": {
                 "total_boluses": len(boluses),
