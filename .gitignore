@@ -31,3 +31,8 @@ Thumbs.db
 .coverage
 
 config.json
+
+# Generated reports
+*.html
+nightscout_report.html
+nightscout_agp_report.html
