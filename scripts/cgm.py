@@ -4321,11 +4321,21 @@ def generate_html_report(days=90, output_path=None):
                                 position: 'top'
                             },
                             tooltip: {
+                                mode: 'index',
                                 callbacks: {
+                                    label: (ctx) => {
+                                        const idx = ctx.dataIndex;
+                                        const d = dailyInsulinStats[idx];
+                                        if (ctx.datasetIndex === 0) {
+                                            return `Bolus: ${d.bolus.toFixed(1)} U`;
+                                        } else {
+                                            return `Basal: ${d.basal.toFixed(1)} U`;
+                                        }
+                                    },
                                     afterBody: (ctx) => {
                                         const idx = ctx[0].dataIndex;
                                         const total = dailyInsulinStats[idx].total;
-                                        return `Total: ${total.toFixed(1)} U`;
+                                        return `───────────\\nTotal: ${total.toFixed(1)} U`;
                                     }
                                 }
                             }
